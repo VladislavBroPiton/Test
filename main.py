@@ -11,10 +11,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Настройка Google Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- БАЗА ДАННЫХ (psycopg2) ---
+# --- БАЗА ДАННЫХ ---
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
@@ -58,7 +57,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     try:
-        # Сохраняем пользователя
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
@@ -73,14 +71,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
 
-        # Ответ AI
         response = client.models.generate_content(
             model='gemini-1.5-flash',
             contents=f"Ты — вежливый продавец. Клиент написал: {text}"
         )
         answer = response.text
 
-        # Сохраняем ответ AI
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("INSERT INTO messages (user_id, content, role) VALUES (%s, %s, 'ai')", (user_id, answer))
@@ -92,11 +88,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Ошибка: {e}")
         await update.message.reply_text("Ошибка. Попробуйте позже.")
 
-async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    reaction_event = update.message_reaction
-    if reaction_event:
+# ✅ ИСПРАВЛЕНИЕ: Универсальная функция для реакций (работает на любой версии)
+async def handle_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Если это реакция (message_reaction не None)
+    if update.message_reaction:
+        reaction_event = update.message_reaction
         user = reaction_event.user
         reaction = reaction_event.new_reaction[0].emoji if reaction_event.new_reaction else None
+        
         if reaction in ["❤️", "👍", "🔥"]:
             try:
                 conn = get_db_connection()
@@ -113,7 +112,7 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             finally:
                 conn.close()
 
-# --- ВЕБ-СЕРВЕР (Health Check) ---
+# --- ВЕБ-СЕРВЕР ---
 async def handle_health(request):
     return web.Response(text="Бот живой!")
 
@@ -133,8 +132,8 @@ async def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # ✅ ИСПРАВЛЕНИЕ: используем filters.REACTION (все заглавные)
-    application.add_handler(MessageHandler(filters.REACTION, handle_reaction))
+    # ✅ ВСЕ СООБЩЕНИЯ И РЕАКЦИИ ЧЕРЕЗ ОДИН ФИЛЬТР
+    application.add_handler(MessageHandler(filters.ALL, handle_update))
 
     await asyncio.gather(
         application.start_polling(allowed_updates=Update.ALL_TYPES),
