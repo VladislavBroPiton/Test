@@ -2,17 +2,16 @@ import os
 import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from google import genai  # Новая библиотека для Gemini
+from google import genai
 from aiohttp import web
 import psycopg2
-from psycopg2.extras import RealDictCursor
 
-# --- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (Render) ---
+# --- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")  # ЗАБЕРИТЕ ЭТУ СТРОКУ ИЗ NEON!
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Настройка Google Gemini (новая библиотека)
+# Настройка Google Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- БАЗА ДАННЫХ (psycopg2) ---
@@ -34,7 +33,7 @@ def init_db():
                     id SERIAL PRIMARY KEY,
                     user_id INT REFERENCES users(id),
                     content TEXT,
-                    role TEXT,  -- 'user' или 'ai'
+                    role TEXT,
                     created_at TIMESTAMP DEFAULT NOW()
                 );
                 CREATE TABLE IF NOT EXISTS reactions (
@@ -48,7 +47,7 @@ def init_db():
         conn.close()
         print("✅ База данных инициализирована")
     except Exception as e:
-        print(f"⚠️ База данных недоступна: {e}. Бот запустится, но данные не будут сохраняться.")
+        print(f"⚠️ База данных недоступна: {e}")
 
 # --- КОМАНДЫ БОТА ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -59,24 +58,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     try:
-        # Сохраняем пользователя и сообщение в БД
+        # Сохраняем пользователя
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO users (telegram_id, username) VALUES (%s, %s)
                 ON CONFLICT (telegram_id) DO NOTHING
             """, (user.id, user.first_name))
-            
             cur.execute("SELECT id FROM users WHERE telegram_id = %s", (user.id,))
             row = cur.fetchone()
             user_id = row[0] if row else None
-
             if user_id:
                 cur.execute("INSERT INTO messages (user_id, content, role) VALUES (%s, %s, 'user')", (user_id, text))
         conn.commit()
         conn.close()
 
-        # Генерация ответа через AI
+        # Ответ AI
         response = client.models.generate_content(
             model='gemini-1.5-flash',
             contents=f"Ты — вежливый продавец. Клиент написал: {text}"
@@ -91,18 +88,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         await update.message.reply_text(answer)
-
     except Exception as e:
-        print(f"Ошибка в боте: {e}")
+        print(f"Ошибка: {e}")
         await update.message.reply_text("Ошибка. Попробуйте позже.")
 
 async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает реакции на сообщения"""
     reaction_event = update.message_reaction
     if reaction_event:
         user = reaction_event.user
         reaction = reaction_event.new_reaction[0].emoji if reaction_event.new_reaction else None
-        
         if reaction in ["❤️", "👍", "🔥"]:
             try:
                 conn = get_db_connection()
@@ -119,7 +113,7 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             finally:
                 conn.close()
 
-# --- ВЕБ-СЕРВЕР ДЛЯ HEALTH CHECK (Пробуждение Render) ---
+# --- ВЕБ-СЕРВЕР (Health Check) ---
 async def handle_health(request):
     return web.Response(text="Бот живой!")
 
@@ -128,23 +122,20 @@ async def start_http_server():
     app.router.add_get('/health', handle_health)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 10000)  # Стандартный порт для Render
+    site = web.TCPSite(runner, '0.0.0.0', 10000)
     await site.start()
     print("🚀 HTTP сервер запущен на порту 10000")
-    await asyncio.Event().wait()  # Держим сервер живым
+    await asyncio.Event().wait()
 
 # --- ЗАПУСК ---
 async def main():
-    # Инициализация БД (даже если упадет, бот продолжит работу)
     init_db()
-
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # ВАЖНО: используем filters.Reaction, а не filters.REACTION
-    application.add_handler(MessageHandler(filters.Reaction, handle_reaction))
+    # ✅ ИСПРАВЛЕНИЕ: используем filters.REACTION (все заглавные)
+    application.add_handler(MessageHandler(filters.REACTION, handle_reaction))
 
-    # Запускаем бота и веб-сервер параллельно
     await asyncio.gather(
         application.start_polling(allowed_updates=Update.ALL_TYPES),
         start_http_server()
