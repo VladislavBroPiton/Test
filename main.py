@@ -1,5 +1,6 @@
 import os
 import asyncio
+import threading
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
@@ -55,7 +56,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     text = update.message.text
-
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -88,14 +88,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Ошибка: {e}")
         await update.message.reply_text("Ошибка. Попробуйте позже.")
 
-# ✅ ИСПРАВЛЕНИЕ: Универсальная функция для реакций (работает на любой версии)
 async def handle_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Если это реакция (message_reaction не None)
     if update.message_reaction:
         reaction_event = update.message_reaction
         user = reaction_event.user
         reaction = reaction_event.new_reaction[0].emoji if reaction_event.new_reaction else None
-        
         if reaction in ["❤️", "👍", "🔥"]:
             try:
                 conn = get_db_connection()
@@ -116,7 +113,7 @@ async def handle_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_health(request):
     return web.Response(text="Бот живой!")
 
-async def start_http_server():
+async def run_http_server():
     app = web.Application()
     app.router.add_get('/health', handle_health)
     runner = web.AppRunner(app)
@@ -127,18 +124,18 @@ async def start_http_server():
     await asyncio.Event().wait()
 
 # --- ЗАПУСК ---
-async def main():
+def main():
     init_db()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # ✅ ВСЕ СООБЩЕНИЯ И РЕАКЦИИ ЧЕРЕЗ ОДИН ФИЛЬТР
     application.add_handler(MessageHandler(filters.ALL, handle_update))
 
-    await asyncio.gather(
-        application.start_polling(allowed_updates=Update.ALL_TYPES),
-        start_http_server()
-    )
+    # Запускаем веб-сервер в отдельном потоке
+    threading.Thread(target=lambda: asyncio.run(run_http_server()), daemon=True).start()
+    
+    # Запускаем бота (run_polling блокирует выполнение)
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
