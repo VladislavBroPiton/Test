@@ -2,7 +2,7 @@ import os
 import asyncio
 import threading
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from aiohttp import web
 import psycopg2
@@ -126,7 +126,8 @@ async def run_http_server():
 # --- ЗАПУСК ---
 def main():
     init_db()
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    # ИСПОЛЬЗУЕМ ApplicationBuilder, а не Application.builder()
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.ALL, handle_update))
@@ -134,7 +135,7 @@ def main():
     # Запускаем веб-сервер в отдельном потоке
     threading.Thread(target=lambda: asyncio.run(run_http_server()), daemon=True).start()
     
-    # Запускаем бота (run_polling блокирует выполнение)
+    # Запускаем бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
