@@ -72,7 +72,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.0-flash-exp',  # Или 'gemini-1.5-flash-8b'
             contents=f"Ты — вежливый продавец. Клиент написал: {text}"
         )
         answer = response.text
