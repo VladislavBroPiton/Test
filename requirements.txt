@@ -1,4 +1,4 @@
-python-telegram-bot
+python-telegram-bot<21
 google-genai
 aiohttp
 psycopg2-binary
